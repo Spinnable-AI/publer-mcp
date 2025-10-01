@@ -1,89 +1,95 @@
 #!/usr/bin/env python3
 """
-Local development runner for Publer MCP server.
+Local development runner for Publer MCP Server
 
-This script helps with local development and testing of the MCP server.
+This script helps run the MCP server locally for testing and development.
+Supports both stdio and SSE transport modes.
 """
 
-import argparse
 import asyncio
 import os
 import sys
 from pathlib import Path
 
-# Add the src directory to the Python path
+# Add src to Python path
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
+from publer_mcp.server import app, health_check
+import mcp.server.stdio
+from mcp.server.models import InitializationOptions
 
-def run_server(transport: str = "stdio", port: int = 8000):
-    """
-    Run the Publer MCP server locally.
+def check_environment():
+    """Check if required environment variables are set"""
+    api_key = os.getenv("PUBLER_API_KEY")
+    workspace_id = os.getenv("PUBLER_WORKSPACE_ID")
     
-    Args:
-        transport: Transport method ('stdio' or 'sse')
-        port: Port for SSE transport (ignored for stdio)
-    """
+    if not api_key:
+        print("⚠️  PUBLER_API_KEY environment variable not set")
+        print("   Set it with: export PUBLER_API_KEY=your_api_key")
+    
+    if not workspace_id:
+        print("⚠️  PUBLER_WORKSPACE_ID environment variable not set") 
+        print("   Set it with: export PUBLER_WORKSPACE_ID=your_workspace_id")
+    
+    if api_key and workspace_id:
+        print("✅ Environment variables configured")
+        return True
+    else:
+        print("\n💡 You can still test the server, but tools will show configuration errors")
+        return False
+
+async def run_stdio():
+    """Run MCP server with stdio transport (for Claude Desktop)"""
+    print("🚀 Starting Publer MCP Server (stdio transport)")
+    print("   Use this mode for Claude Desktop integration")
+    print("   Press Ctrl+C to stop")
+    print()
+    
     try:
-        from publer_mcp.server import app
-        
-        print(f"🚀 Starting Publer MCP Server...")
-        print(f"📡 Transport: {transport}")
-        
-        if transport == "stdio":
-            print("🔌 Running in stdio mode for local MCP client testing")
-            print("ℹ️  Connect your MCP client to this process")
-            # TODO: Implement stdio transport runner
-            print("📝 TODO: Implement stdio transport - server structure ready!")
-            
-        elif transport == "sse":
-            print(f"🌐 Running in SSE mode on port {port}")
-            print(f"🔗 Access at: http://localhost:{port}")
-            # TODO: Implement SSE transport runner
-            print("📝 TODO: Implement SSE transport - server structure ready!")
-            
-        else:
-            print(f"❌ Unknown transport: {transport}")
-            sys.exit(1)
-            
-    except ImportError as e:
-        print(f"❌ Import error: {e}")
-        print("💡 Make sure to install dependencies: pip install -e .")
-        sys.exit(1)
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="publer-mcp",
+                    server_version="0.1.0",
+                    capabilities={}
+                )
+            )
+    except KeyboardInterrupt:
+        print("\n👋 Publer MCP Server stopped")
+
+async def run_health_check():
+    """Test server health check"""
+    print("🔍 Testing server health check...")
+    try:
+        result = await health_check()
+        print(f"✅ Health check passed: {result}")
+        return True
     except Exception as e:
-        print(f"❌ Error starting server: {e}")
-        sys.exit(1)
+        print(f"❌ Health check failed: {e}")
+        return False
 
-
-def main():
-    """
-    Main entry point for local development runner.
-    """
-    parser = argparse.ArgumentParser(
-        description="Run Publer MCP server locally for development"
-    )
-    parser.add_argument(
-        "--transport",
-        choices=["stdio", "sse"],
-        default="stdio",
-        help="Transport method (default: stdio)"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port for SSE transport (default: 8000)"
-    )
+async def main():
+    """Main entry point"""
+    print("🎯 Publer MCP Server - Local Development")
+    print("=" * 50)
     
-    args = parser.parse_args()
+    # Check environment
+    env_ok = check_environment()
+    print()
     
-    # Check if we're in a development environment
-    if not (Path.cwd() / "pyproject.toml").exists():
-        print("⚠️  Warning: Not running from project root")
-        print("💡 Consider running from the project root directory")
+    # Run health check
+    health_ok = await run_health_check()
+    print()
     
-    run_server(transport=args.transport, port=args.port)
-
+    if len(sys.argv) > 1 and sys.argv[1] == "health-only":
+        print("Health check complete. Exiting.")
+        return
+    
+    # Start server
+    await run_stdio()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
