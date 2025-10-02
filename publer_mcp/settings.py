@@ -1,27 +1,23 @@
-"""Configuration settings for Publer MCP server.
-
-All configuration is centralized here. Never hardcode credentials.
-"""
-
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
-
-    # Server configuration
-    host: str = "0.0.0.0"
-    port: int = 3000
-    log_level: str = "INFO"
-
-    # Publer API configuration
-    # Credentials will be extracted from request headers via Spinnable backend
-    publer_api_base_url: str = "https://api.publer.io/v1"
-
+    """Configuration settings for Publer MCP server."""
+    
+    # Publer API Configuration
+    publer_api_key: str = Field(..., description="Publer API key")
+    publer_workspace_id: str = Field(..., description="Publer workspace ID") 
+    publer_api_base_url: str = Field(
+        default="https://app.publer.com/api/v1/",
+        description="Publer API base URL"
+    )
+    
+    # Server Configuration
+    port: int = Field(default=3000, description="Server port")
+    host: str = Field(default="0.0.0.0", description="Server host")
+    log_level: str = Field(default="INFO", description="Log level")
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-
-
-# Global settings instance
-settings = Settings()
