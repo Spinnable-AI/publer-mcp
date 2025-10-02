@@ -1,0 +1,49 @@
+[project]
+name = "publer_mcp"
+version = "1.0.0"
+description = "MCP server for Publer integration"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Spinnable", email = "support@spinnable.ai" }
+]
+
+[tool.uv]
+package = true
+
+# Core dependencies
+dependencies = [
+    # MCP Core (tested stable version range)
+    "mcp>=1.15.0,<2.0.0",
+    
+    # Web Framework (FastMCP + Starlette pattern)
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "starlette>=0.40.0",
+    
+    # HTTP Client with retries (pinned for stability)
+    "httpx>=0.26.0,<0.28.0",
+    "tenacity>=8.2.0",
+    
+    # Data Validation & Configuration
+    "pydantic>=2.7.0",
+    "python-dotenv>=1.0.0",
+    
+    # Development & Production Tools
+    "ruff>=0.13.2",
+]
+
+# Build system
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Tool configurations
+[tool.ruff]
+line-length = 180
+target-version = "py312"
+exclude = [".scratch", "dist", "build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # Line length handled by line-length setting
