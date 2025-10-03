@@ -41,11 +41,11 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
         
         # Get user information (only needs API key, not workspace-id)
         user_headers = create_api_headers(credentials, include_workspace=False)
-        user_info = await client.get("users/me", user_headers, include_workspace_header=False)
+        user_info = await client.get("users/me", user_headers)
         
         # Get workspace information (only needs API key, not workspace-id)
         workspace_headers = create_api_headers(credentials, include_workspace=False)  
-        workspaces = await client.get("workspaces", workspace_headers, include_workspace_header=False)
+        workspaces = await client.get("workspaces", workspace_headers)
         
         # Find current workspace from header if provided
         current_workspace = None
