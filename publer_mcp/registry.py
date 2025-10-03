@@ -9,7 +9,7 @@ from mcp.server import FastMCP
 
 def register_tools(mcp: FastMCP):
     """Register all Publer tools with the MCP server.
-    
+
     Args:
         mcp: The FastMCP server instance to register tools with.
     """
