@@ -91,21 +91,27 @@ def validate_workspace_access(credentials: PublerCredentials) -> tuple[bool, str
 
 def create_api_headers(credentials: PublerCredentials, include_workspace: bool = True) -> dict[str, str]:
     """
-    Create headers dictionary for API client calls.
+    Create headers dictionary for API client calls following Publer API requirements.
+    
+    This function creates the properly formatted headers that the thin HTTP client
+    will forward to the Publer API. It handles the Publer-specific authentication
+    format: "Bearer-API" instead of just "Bearer".
     
     Args:
         credentials: PublerCredentials containing API key and workspace ID
-        include_workspace: Whether to include x-workspace-id header
+        include_workspace: Whether to include Publer-Workspace-Id header
         
     Returns:
-        Dictionary of headers for API calls
+        Dictionary of headers ready to be forwarded by the HTTP client
     """
     headers = {}
     
+    # Create Publer-specific Authorization header: "Bearer-API" instead of "Bearer"
     if credentials.api_key:
-        headers['x-api-key'] = credentials.api_key
+        headers['Authorization'] = f"Bearer-API {credentials.api_key}"
     
+    # Add workspace ID header for workspace-scoped operations
     if include_workspace and credentials.workspace_id:
-        headers['x-workspace-id'] = credentials.workspace_id
+        headers['Publer-Workspace-Id'] = credentials.workspace_id
     
     return headers
