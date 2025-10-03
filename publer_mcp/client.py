@@ -35,11 +35,11 @@ class PublerJobTimeoutError(PublerAPIError):
 class PublerAPIClient:
     """
     Thin HTTP wrapper for Publer API following Section 7 principles.
-    
-    The client must never contain MCP tool logic. Its only job is to provide 
-    safe, consistent access to the API by forwarding headers and handling 
+
+    The client must never contain MCP tool logic. Its only job is to provide
+    safe, consistent access to the API by forwarding headers and handling
     HTTP concerns like retries and error responses.
-    
+
     All credential validation and header construction is handled by tools
     via the auth.py module.
     """
@@ -57,7 +57,7 @@ class PublerAPIClient:
     def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
         """
         Handle API response with proper error parsing.
-        
+
         This only handles HTTP-level concerns. All credential validation
         and business logic is handled in tools via auth.py.
         """
@@ -87,62 +87,54 @@ class PublerAPIClient:
         except Exception:
             return {}
 
-    @retry(
-        stop=stop_after_attempt(3), 
-        wait=wait_exponential(multiplier=1, min=4, max=10), 
-        retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError))
-    )
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError)))
     async def get(self, endpoint: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Make GET request to Publer API with provided headers.
-        
+
         This is a thin wrapper that forwards headers as-is. All credential
         validation and header construction is handled by tools via auth.py.
-        
+
         Args:
             endpoint: API endpoint path
             headers: Pre-built headers from tools (containing Authorization, Publer-Workspace-Id, etc.)
             params: Query parameters
-            
+
         Returns:
             API response data
         """
         # Build full URL
         url = f"{self.base_url}{endpoint.lstrip('/')}"
-        
+
         # Add required Content-Type if not already present
         request_headers = {"Content-Type": "application/json", **headers}
-        
+
         # Forward headers directly - no credential validation or modification
         response = await self._client.get(url, params=params, headers=request_headers)
         return self._handle_response(response)
 
-    @retry(
-        stop=stop_after_attempt(3), 
-        wait=wait_exponential(multiplier=1, min=4, max=10), 
-        retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError))
-    )
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError)))
     async def post(self, endpoint: str, headers: Dict[str, str], json_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Make POST request to Publer API with provided headers.
-        
+
         This is a thin wrapper that forwards headers as-is. All credential
         validation and header construction is handled by tools via auth.py.
-        
+
         Args:
             endpoint: API endpoint path
             headers: Pre-built headers from tools (containing Authorization, Publer-Workspace-Id, etc.)
             json_data: Request body data
-            
+
         Returns:
             API response data
         """
         # Build full URL
         url = f"{self.base_url}{endpoint.lstrip('/')}"
-        
+
         # Add required Content-Type if not already present
         request_headers = {"Content-Type": "application/json", **headers}
-        
+
         # Forward headers directly - no credential validation or modification
         response = await self._client.post(url, json=json_data, headers=request_headers)
         return self._handle_response(response)
@@ -150,16 +142,16 @@ class PublerAPIClient:
     async def poll_job_status(self, job_id: str, headers: Dict[str, str], timeout: int = 300, poll_interval: int = 2) -> Dict[str, Any]:
         """
         Poll job status until completion with provided headers.
-        
+
         This is a thin wrapper for polling. All credential validation
         and header construction is handled by tools via auth.py.
-        
+
         Args:
             job_id: Job ID returned from async operations
             headers: Pre-built headers from tools
             timeout: Maximum time to wait in seconds
             poll_interval: Seconds between status checks
-            
+
         Returns:
             Final job result when completed
         """
