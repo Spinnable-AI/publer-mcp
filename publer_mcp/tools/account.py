@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from mcp.server.fastmcp import Context
 
-from ..auth import create_api_headers, extract_publer_credentials, validate_api_key, validate_workspace_access
+from ..auth import create_api_headers, extract_publer_credentials, validate_api_key, validate_workspace_id
 from ..client import PublerAPIError, create_client
 
 
@@ -33,7 +33,7 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
         client = create_client()
 
         # Get user information (only needs API key)
-        user_headers = create_api_headers(credentials, include_workspace=False)
+        user_headers = create_api_headers(credentials)
         user_info = await client.get("users/me", user_headers)
 
         # Get available workspaces (only needs API key)
@@ -47,7 +47,6 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
             "workspaces": {
                 "available_workspaces": len(workspaces),
                 "workspace_list": [{"id": ws.get("id"), "name": ws.get("name"), "role": ws.get("role", "unknown")} for ws in workspaces],
-                "provided_workspace_id": credentials.workspace_id,  # Optional info
             },
             "integration_status": {"authentication": "success", "api_connectivity": "operational"},
         }
@@ -78,7 +77,7 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
         return {"status": "connection_error", "error": f"Connection error: {str(e)}", "integration_status": {"authentication": "unknown", "api_connectivity": "failed"}}
 
 
-async def publer_list_connected_platforms(ctx: Context) -> Dict[str, Any]:
+async def publer_list_connected_platforms(ctx: Context, workspace_id: str) -> Dict[str, Any]:
     """
     List all your connected social media platforms with their posting
     capabilities and current status.
@@ -87,6 +86,10 @@ async def publer_list_connected_platforms(ctx: Context) -> Dict[str, Any]:
     and available for content publishing, along with their current status and
     supported content types.
 
+    Args:
+        workspace_id: The Publer workspace ID to list platforms for. Required for
+                     accessing workspace-scoped social media accounts.
+
     Returns:
         Dict containing connected platforms, their capabilities, and status
     """
@@ -94,15 +97,20 @@ async def publer_list_connected_platforms(ctx: Context) -> Dict[str, Any]:
         # Extract credentials using centralized auth logic
         credentials = extract_publer_credentials(ctx)
 
-        # Validate both API key AND workspace ID (required for accounts endpoint)
-        workspace_valid, workspace_error = validate_workspace_access(credentials)
+        # Validate API key
+        api_valid, api_error = validate_api_key(credentials)
+        if not api_valid:
+            return {"status": "authentication_failed", "error": api_error, "platforms": []}
+
+        # Validate workspace_id parameter
+        workspace_valid, workspace_error = validate_workspace_id(workspace_id)
         if not workspace_valid:
-            return {"status": "authentication_failed" if "API key" in workspace_error else "workspace_required", "error": workspace_error, "platforms": []}
+            return {"status": "workspace_required", "error": workspace_error, "platforms": []}
 
         client = create_client()
 
-        # Get accounts (requires both API key and workspace-id)
-        accounts_headers = create_api_headers(credentials, include_workspace=True)
+        # Get accounts (requires both API key and workspace_id)
+        accounts_headers = create_api_headers(credentials, workspace_id=workspace_id)
         accounts = await client.get("accounts", accounts_headers)
 
         await client.close()
