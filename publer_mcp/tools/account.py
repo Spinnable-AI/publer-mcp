@@ -11,20 +11,20 @@ from ..client import create_client, PublerAPIError
 
 async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
     """
-    Check your Publer account status, workspace access, and subscription limits 
-    to verify your integration is working correctly.
+    Check your Publer account status and available workspaces to verify 
+    your integration is working correctly.
     
     This tool validates your authentication and provides an overview of your 
-    Publer account capabilities, workspace access, and current status.
+    Publer account information and available workspaces. It focuses on account
+    status rather than workspace validation.
     
     Returns:
-        Dict containing account info, workspace details, and subscription status
+        Dict containing account info, available workspaces, and integration status
     """
     try:
-        # Extract credentials using centralized auth logic
         credentials = extract_publer_credentials(ctx)
         
-        # Validate API key (minimum requirement)
+        # Only validate API key (workspace_id is optional for account status)
         api_valid, api_error = validate_api_key(credentials)
         if not api_valid:
             return {
@@ -32,35 +32,19 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
                 "error": api_error,
                 "integration_status": {
                     "authentication": "failed",
-                    "workspace_access": "unknown",
                     "api_connectivity": "failed"
                 }
             }
         
         client = create_client()
         
-        # Get user information (only needs API key, not workspace-id)
+        # Get user information (only needs API key)
         user_headers = create_api_headers(credentials, include_workspace=False)
         user_info = await client.get("users/me", user_headers)
         
-        # Get workspace information (only needs API key, not workspace-id)
-        workspace_headers = create_api_headers(credentials, include_workspace=False)  
-        workspaces = await client.get("workspaces", workspace_headers)
-        
-        # Find current workspace from header if provided
-        current_workspace = None
-        workspace_access_status = "not_provided"
-        
-        if credentials.workspace_id and workspaces:
-            workspace_access_status = "checking"
-            for workspace in workspaces.get('data', []):
-                if str(workspace.get('id')) == str(credentials.workspace_id):
-                    current_workspace = workspace
-                    workspace_access_status = "success"
-                    break
-            
-            if not current_workspace:
-                workspace_access_status = "invalid_id"
+        # Get available workspaces (only needs API key)
+        workspaces_response = await client.get("workspaces", user_headers)
+        workspaces = workspaces_response.get('data', [])
         
         await client.close()
         
@@ -70,18 +54,22 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
                 "user_id": user_info.get("id"),
                 "email": user_info.get("email"),
                 "name": user_info.get("name"),
-                "account_type": user_info.get("account_type", "unknown"),
-                "api_access": True
+                "account_type": user_info.get("account_type", "unknown")
             },
-            "workspace": {
-                "id": credentials.workspace_id,
-                "name": current_workspace.get("name") if current_workspace else "Unknown",
-                "status": workspace_access_status,
-                "permissions": current_workspace.get("permissions", []) if current_workspace else []
+            "workspaces": {
+                "available_workspaces": len(workspaces),
+                "workspace_list": [
+                    {
+                        "id": ws.get("id"),
+                        "name": ws.get("name"),
+                        "role": ws.get("role", "unknown")
+                    }
+                    for ws in workspaces
+                ],
+                "provided_workspace_id": credentials.workspace_id  # Optional info
             },
             "integration_status": {
                 "authentication": "success",
-                "workspace_access": workspace_access_status,
                 "api_connectivity": "operational"
             }
         }
@@ -93,17 +81,15 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
                 "error": "Invalid API key. Please check your Publer API credentials.",
                 "integration_status": {
                     "authentication": "failed",
-                    "workspace_access": "unknown",
                     "api_connectivity": "failed"
                 }
             }
         elif "Permission denied" in str(e) or "403" in str(e):
             return {
                 "status": "permission_denied", 
-                "error": "Permission denied. Your API key may lack required scopes or workspace access.",
+                "error": "Permission denied. Your API key may lack required scopes.",
                 "integration_status": {
                     "authentication": "success",
-                    "workspace_access": "denied",
                     "api_connectivity": "limited"
                 }
             }
@@ -113,7 +99,6 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
                 "error": "Rate limit exceeded. Please wait before trying again.",
                 "integration_status": {
                     "authentication": "unknown",
-                    "workspace_access": "unknown", 
                     "api_connectivity": "throttled"
                 }
             }
@@ -123,7 +108,6 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
                 "error": f"Publer API error: {str(e)}",
                 "integration_status": {
                     "authentication": "unknown",
-                    "workspace_access": "unknown",
                     "api_connectivity": "error"
                 }
             }
@@ -134,7 +118,6 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
             "error": f"Connection error: {str(e)}",
             "integration_status": {
                 "authentication": "unknown",
-                "workspace_access": "unknown",
                 "api_connectivity": "failed"
             }
         }
