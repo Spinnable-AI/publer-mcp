@@ -5,32 +5,8 @@ Account and workspace management tools for Publer MCP.
 from typing import Any, Dict, List
 from mcp.server.fastmcp import Context
 
+from ..auth import extract_publer_credentials, validate_api_key, validate_workspace_access, create_api_headers
 from ..client import create_client, PublerAPIError
-
-
-def extract_publer_credentials(ctx: Context) -> tuple[str | None, str | None]:
-    """
-    Extract Publer API credentials from MCP request headers.
-    
-    Returns:
-        Tuple of (api_key, workspace_id) or (None, None) if missing
-    """
-    if not ctx.request_context or not ctx.request_context.request or not ctx.request_context.request.headers:
-        return None, None
-    
-    headers = ctx.request_context.request.headers
-    
-    # Extract API key
-    api_key = headers.get('x-api-key')
-    if not api_key:
-        auth = headers.get('authorization', '')
-        if auth.startswith('Bearer '):
-            api_key = auth[len('Bearer '):]
-    
-    # Extract workspace ID
-    workspace_id = headers.get('x-workspace-id')
-    
-    return api_key, workspace_id
 
 
 async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
@@ -45,13 +21,15 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
         Dict containing account info, workspace details, and subscription status
     """
     try:
-        # Extract credentials from request context
-        api_key, workspace_id = extract_publer_credentials(ctx)
+        # Extract credentials using centralized auth logic
+        credentials = extract_publer_credentials(ctx)
         
-        if not api_key:
+        # Validate API key (minimum requirement)
+        api_valid, api_error = validate_api_key(credentials)
+        if not api_valid:
             return {
                 "status": "authentication_failed",
-                "error": "Missing API key. Please provide x-api-key header or Authorization: Bearer <key>",
+                "error": api_error,
                 "integration_status": {
                     "authentication": "failed",
                     "workspace_access": "unknown",
@@ -59,28 +37,30 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
                 }
             }
         
-        # Create request headers for API client
-        request_headers = {
-            'x-api-key': api_key,
-            'x-workspace-id': workspace_id or ''
-        }
-        
         client = create_client()
         
-        # Get user information (tests basic API key authentication)
-        user_info = await client.get("users/me", request_headers, include_workspace_header=False)
+        # Get user information (only needs API key, not workspace-id)
+        user_headers = create_api_headers(credentials, include_workspace=False)
+        user_info = await client.get("users/me", user_headers, include_workspace_header=False)
         
-        # Get workspace information (tests workspace ID authentication)  
-        workspaces = await client.get("workspaces", request_headers, include_workspace_header=False)
+        # Get workspace information (only needs API key, not workspace-id)
+        workspace_headers = create_api_headers(credentials, include_workspace=False)  
+        workspaces = await client.get("workspaces", workspace_headers, include_workspace_header=False)
         
-        # Find current workspace from header
+        # Find current workspace from header if provided
         current_workspace = None
+        workspace_access_status = "not_provided"
         
-        if workspace_id and workspaces:
+        if credentials.workspace_id and workspaces:
+            workspace_access_status = "checking"
             for workspace in workspaces.get('data', []):
-                if str(workspace.get('id')) == str(workspace_id):
+                if str(workspace.get('id')) == str(credentials.workspace_id):
                     current_workspace = workspace
+                    workspace_access_status = "success"
                     break
+            
+            if not current_workspace:
+                workspace_access_status = "invalid_id"
         
         await client.close()
         
@@ -94,14 +74,14 @@ async def publer_check_account_status(ctx: Context) -> Dict[str, Any]:
                 "api_access": True
             },
             "workspace": {
-                "id": workspace_id,
+                "id": credentials.workspace_id,
                 "name": current_workspace.get("name") if current_workspace else "Unknown",
-                "status": "active" if current_workspace else "not_found",
+                "status": workspace_access_status,
                 "permissions": current_workspace.get("permissions", []) if current_workspace else []
             },
             "integration_status": {
                 "authentication": "success",
-                "workspace_access": "success" if current_workspace else "limited",
+                "workspace_access": workspace_access_status,
                 "api_connectivity": "operational"
             }
         }
@@ -173,33 +153,23 @@ async def publer_list_connected_platforms(ctx: Context) -> Dict[str, Any]:
         Dict containing connected platforms, their capabilities, and status
     """
     try:
-        # Extract credentials from request context
-        api_key, workspace_id = extract_publer_credentials(ctx)
+        # Extract credentials using centralized auth logic
+        credentials = extract_publer_credentials(ctx)
         
-        if not api_key:
+        # Validate both API key AND workspace ID (required for accounts endpoint)
+        workspace_valid, workspace_error = validate_workspace_access(credentials)
+        if not workspace_valid:
             return {
-                "status": "authentication_failed",
-                "error": "Missing API key. Please provide x-api-key header or Authorization: Bearer <key>",
+                "status": "authentication_failed" if "API key" in workspace_error else "workspace_required",
+                "error": workspace_error,
                 "platforms": []
             }
-        
-        if not workspace_id:
-            return {
-                "status": "workspace_required",
-                "error": "Missing workspace ID. Please provide x-workspace-id header.",
-                "platforms": []
-            }
-        
-        # Create request headers for API client
-        request_headers = {
-            'x-api-key': api_key,
-            'x-workspace-id': workspace_id
-        }
         
         client = create_client()
         
-        # Get accounts (tests workspace-scoped authentication)
-        accounts_response = await client.get("accounts", request_headers)
+        # Get accounts (requires both API key and workspace-id)
+        accounts_headers = create_api_headers(credentials, include_workspace=True)
+        accounts_response = await client.get("accounts", accounts_headers)
         accounts = accounts_response.get('data', [])
         
         await client.close()
