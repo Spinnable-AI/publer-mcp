@@ -78,10 +78,10 @@ def validate_workspace_id(workspace_id: str | None) -> tuple[bool, str | None]:
     """
     if not workspace_id:
         return False, "Missing workspace_id parameter. This operation requires a workspace ID."
-    
+
     if not isinstance(workspace_id, str) or not workspace_id.strip():
         return False, "Invalid workspace_id parameter. Must be a non-empty string."
-    
+
     return True, None
 
 

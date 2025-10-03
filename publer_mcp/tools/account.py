@@ -87,7 +87,7 @@ async def publer_list_connected_platforms(ctx: Context, workspace_id: str) -> Di
     supported content types.
 
     Args:
-        workspace_id: The Publer workspace ID to list platforms for. Required for 
+        workspace_id: The Publer workspace ID to list platforms for. Required for
                      accessing workspace-scoped social media accounts.
 
     Returns:
@@ -100,20 +100,12 @@ async def publer_list_connected_platforms(ctx: Context, workspace_id: str) -> Di
         # Validate API key
         api_valid, api_error = validate_api_key(credentials)
         if not api_valid:
-            return {
-                "status": "authentication_failed",
-                "error": api_error,
-                "platforms": []
-            }
+            return {"status": "authentication_failed", "error": api_error, "platforms": []}
 
         # Validate workspace_id parameter
         workspace_valid, workspace_error = validate_workspace_id(workspace_id)
         if not workspace_valid:
-            return {
-                "status": "workspace_required",
-                "error": workspace_error,
-                "platforms": []
-            }
+            return {"status": "workspace_required", "error": workspace_error, "platforms": []}
 
         client = create_client()
 
