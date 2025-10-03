@@ -34,10 +34,14 @@ class PublerJobTimeoutError(PublerAPIError):
 
 class PublerAPIClient:
     """
-    Multi-user async client for Publer API with request-scoped credentials.
+    Thin HTTP wrapper for Publer API following Section 7 principles.
 
-    All credentials are extracted from request headers per the Spinnable multi-user architecture.
-    Never stores credentials as instance variables.
+    The client must never contain MCP tool logic. Its only job is to provide
+    safe, consistent access to the API by forwarding headers and handling
+    HTTP concerns like retries and error responses.
+
+    All credential validation and header construction is handled by tools
+    via the auth.py module.
     """
 
     def __init__(self, base_url: str = None):
@@ -50,45 +54,13 @@ class PublerAPIClient:
         self.base_url = (base_url or settings.publer_api_base_url).rstrip("/") + "/"
         self._client = httpx.AsyncClient(timeout=30.0)
 
-    def _extract_credentials_from_headers(self, headers: Dict[str, str]) -> tuple[str, str]:
-        """
-        Extract API credentials from request headers.
-
-        Args:
-            headers: Request headers containing credentials
-
-        Returns:
-            Tuple of (api_key, workspace_id)
-
-        Raises:
-            PublerAuthenticationError: If required headers are missing
-        """
-        api_key = headers.get("x-api-key")
-        workspace_id = headers.get("x-workspace-id")
-
-        if not api_key:
-            raise PublerAuthenticationError("Missing x-api-key header")
-
-        if not workspace_id:
-            raise PublerAuthenticationError("Missing x-workspace-id header")
-
-        return api_key, workspace_id
-
-    def _build_request_headers(self, api_key: str, workspace_id: str, include_workspace: bool = True) -> Dict[str, str]:
-        """Build headers for API request with extracted credentials."""
-        request_headers = {
-            "Authorization": f"Bearer-API {api_key}",
-            "Content-Type": "application/json",
-        }
-
-        # Some endpoints (like /workspaces) don't need workspace ID
-        if include_workspace and workspace_id:
-            request_headers["Publer-Workspace-Id"] = workspace_id
-
-        return request_headers
-
     def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
-        """Handle API response with proper error parsing."""
+        """
+        Handle API response with proper error parsing.
+
+        This only handles HTTP-level concerns. All credential validation
+        and business logic is handled in tools via auth.py.
+        """
         if response.status_code == 401:
             raise PublerAuthenticationError("Invalid API key or insufficient permissions")
 
@@ -116,60 +88,67 @@ class PublerAPIClient:
             return {}
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError)))
-    async def get(self, endpoint: str, request_headers: Dict[str, str], params: Optional[Dict[str, Any]] = None, include_workspace_header: bool = True) -> Dict[str, Any]:
+    async def get(self, endpoint: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Make GET request to Publer API with request-scoped credentials.
+        Make GET request to Publer API with provided headers.
+
+        This is a thin wrapper that forwards headers as-is. All credential
+        validation and header construction is handled by tools via auth.py.
 
         Args:
             endpoint: API endpoint path
-            request_headers: Headers from incoming request (containing credentials)
+            headers: Pre-built headers from tools (containing Authorization, Publer-Workspace-Id, etc.)
             params: Query parameters
-            include_workspace_header: Whether to include workspace ID header
 
         Returns:
             API response data
         """
-        # Extract credentials from request headers
-        api_key, workspace_id = self._extract_credentials_from_headers(request_headers)
-
-        # Build API request headers
-        api_headers = self._build_request_headers(api_key, workspace_id, include_workspace_header)
-
+        # Build full URL
         url = f"{self.base_url}{endpoint.lstrip('/')}"
-        response = await self._client.get(url, params=params, headers=api_headers)
+
+        # Add required Content-Type if not already present
+        request_headers = {"Content-Type": "application/json", **headers}
+
+        # Forward headers directly - no credential validation or modification
+        response = await self._client.get(url, params=params, headers=request_headers)
         return self._handle_response(response)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError)))
-    async def post(self, endpoint: str, request_headers: Dict[str, str], json_data: Optional[Dict[str, Any]] = None, include_workspace_header: bool = True) -> Dict[str, Any]:
+    async def post(self, endpoint: str, headers: Dict[str, str], json_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Make POST request to Publer API with request-scoped credentials.
+        Make POST request to Publer API with provided headers.
+
+        This is a thin wrapper that forwards headers as-is. All credential
+        validation and header construction is handled by tools via auth.py.
 
         Args:
             endpoint: API endpoint path
-            request_headers: Headers from incoming request (containing credentials)
+            headers: Pre-built headers from tools (containing Authorization, Publer-Workspace-Id, etc.)
             json_data: Request body data
-            include_workspace_header: Whether to include workspace ID header
 
         Returns:
             API response data
         """
-        # Extract credentials from request headers
-        api_key, workspace_id = self._extract_credentials_from_headers(request_headers)
-
-        # Build API request headers
-        api_headers = self._build_request_headers(api_key, workspace_id, include_workspace_header)
-
+        # Build full URL
         url = f"{self.base_url}{endpoint.lstrip('/')}"
-        response = await self._client.post(url, json=json_data, headers=api_headers)
+
+        # Add required Content-Type if not already present
+        request_headers = {"Content-Type": "application/json", **headers}
+
+        # Forward headers directly - no credential validation or modification
+        response = await self._client.post(url, json=json_data, headers=request_headers)
         return self._handle_response(response)
 
-    async def poll_job_status(self, job_id: str, request_headers: Dict[str, str], timeout: int = 300, poll_interval: int = 2) -> Dict[str, Any]:
+    async def poll_job_status(self, job_id: str, headers: Dict[str, str], timeout: int = 300, poll_interval: int = 2) -> Dict[str, Any]:
         """
-        Poll job status until completion with request-scoped credentials.
+        Poll job status until completion with provided headers.
+
+        This is a thin wrapper for polling. All credential validation
+        and header construction is handled by tools via auth.py.
 
         Args:
             job_id: Job ID returned from async operations
-            request_headers: Headers from incoming request (containing credentials)
+            headers: Pre-built headers from tools
             timeout: Maximum time to wait in seconds
             poll_interval: Seconds between status checks
 
@@ -180,7 +159,7 @@ class PublerAPIClient:
 
         while time.time() - start_time < timeout:
             try:
-                result = await self.get(f"job_status/{job_id}", request_headers)
+                result = await self.get(f"job_status/{job_id}", headers)
 
                 status = result.get("status")
                 if status == "completed":
