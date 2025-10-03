@@ -8,17 +8,14 @@ authors = [
     { name = "Spinnable", email = "support@spinnable.ai" }
 ]
 
-[tool.uv]
-package = true
-
-# Core dependencies
+# Core dependencies - MUST be in [project] section
 dependencies = [
     # MCP Core (tested stable version range)
     "mcp>=1.15.0,<2.0.0",
     
     # Web Framework (FastMCP + Starlette pattern)
     "fastapi>=0.111.0",
-    "uvicorn[standard]>=0.30.0",
+    "uvicorn[standard]>=0.30.0", 
     "starlette>=0.40.0",
     
     # HTTP Client with retries (pinned for stability)
@@ -32,6 +29,9 @@ dependencies = [
     # Development & Production Tools
     "ruff>=0.13.2",
 ]
+
+[tool.uv]
+package = true
 
 # Build system
 [build-system]
