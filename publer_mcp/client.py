@@ -1,10 +1,10 @@
 import asyncio
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from .settings import Settings
+from .settings import settings
 
 
 class PublerAPIError(Exception):
@@ -29,57 +29,62 @@ class PublerJobTimeoutError(PublerAPIError):
 
 class PublerAPIClient:
     """
-    Async client for Publer API with proper authentication, error handling,
-    rate limiting, and asynchronous job processing support.
+    Multi-user async client for Publer API with request-scoped credentials.
+    
+    All credentials are extracted from request headers per the Spinnable multi-user architecture.
+    Never stores credentials as instance variables.
     """
     
-    def __init__(self, api_key: str, workspace_id: str, base_url: str = "https://app.publer.com/api/v1/"):
+    def __init__(self, base_url: str = None):
         """
         Initialize Publer API client.
         
         Args:
-            api_key: Publer API key (requires Enterprise access)
-            workspace_id: Publer workspace ID (required for most operations)
-            base_url: Base API URL
+            base_url: Optional base API URL override
         """
-        self.api_key = api_key
-        self.workspace_id = workspace_id
-        self.base_url = base_url.rstrip('/') + '/'
-        
-        # Rate limiting tracking
-        self._rate_limit_reset = 0
-        self._rate_limit_remaining = 100
-        
-        self._client = httpx.AsyncClient(
-            timeout=30.0,
-            headers=self._get_base_headers()
-        )
+        self.base_url = (base_url or settings.publer_api_base_url).rstrip('/') + '/'
+        self._client = httpx.AsyncClient(timeout=30.0)
     
-    def _get_base_headers(self, include_workspace: bool = True) -> Dict[str, str]:
-        """Get base headers for API requests."""
-        headers = {
-            "Authorization": f"Bearer-API {self.api_key}",
+    def _extract_credentials_from_headers(self, headers: Dict[str, str]) -> tuple[str, str]:
+        """
+        Extract API credentials from request headers.
+        
+        Args:
+            headers: Request headers containing credentials
+            
+        Returns:
+            Tuple of (api_key, workspace_id)
+            
+        Raises:
+            PublerAuthenticationError: If required headers are missing
+        """
+        api_key = headers.get('x-api-key')
+        workspace_id = headers.get('x-workspace-id') 
+        
+        if not api_key:
+            raise PublerAuthenticationError("Missing x-api-key header")
+            
+        if not workspace_id:
+            raise PublerAuthenticationError("Missing x-workspace-id header")
+            
+        return api_key, workspace_id
+    
+    def _build_request_headers(self, api_key: str, workspace_id: str, 
+                              include_workspace: bool = True) -> Dict[str, str]:
+        """Build headers for API request with extracted credentials."""
+        request_headers = {
+            "Authorization": f"Bearer-API {api_key}",
             "Content-Type": "application/json",
         }
         
         # Some endpoints (like /workspaces) don't need workspace ID
-        if include_workspace and self.workspace_id:
-            headers["Publer-Workspace-Id"] = self.workspace_id
+        if include_workspace and workspace_id:
+            request_headers["Publer-Workspace-Id"] = workspace_id
             
-        return headers
-    
-    def _update_rate_limit_info(self, response: httpx.Response) -> None:
-        """Update rate limit tracking from response headers."""
-        if "X-RateLimit-Remaining" in response.headers:
-            self._rate_limit_remaining = int(response.headers["X-RateLimit-Remaining"])
-        
-        if "X-RateLimit-Reset" in response.headers:
-            self._rate_limit_reset = int(response.headers["X-RateLimit-Reset"])
+        return request_headers
     
     def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
         """Handle API response with proper error parsing."""
-        self._update_rate_limit_info(response)
-        
         if response.status_code == 401:
             raise PublerAuthenticationError("Invalid API key or insufficient permissions")
         
@@ -87,11 +92,8 @@ class PublerAPIClient:
             raise PublerAuthenticationError("Permission denied. Check API key scopes and workspace access")
         
         if response.status_code == 429:
-            reset_time = self._rate_limit_reset
-            wait_time = max(0, reset_time - int(time.time()))
             raise PublerRateLimitError(
-                f"Rate limit exceeded. Limit resets in {wait_time} seconds. "
-                f"Current limit: 100 requests per 2 minutes."
+                "Rate limit exceeded. Publer allows 100 requests per 2 minutes."
             )
         
         if response.status_code >= 400:
@@ -116,13 +118,31 @@ class PublerAPIClient:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError))
     )
-    async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None, 
+    async def get(self, endpoint: str, request_headers: Dict[str, str],
+                  params: Optional[Dict[str, Any]] = None, 
                   include_workspace_header: bool = True) -> Dict[str, Any]:
-        """Make GET request to Publer API."""
-        url = f"{self.base_url}{endpoint.lstrip('/')}"
-        headers = self._get_base_headers(include_workspace=include_workspace_header)
+        """
+        Make GET request to Publer API with request-scoped credentials.
         
-        response = await self._client.get(url, params=params, headers=headers)
+        Args:
+            endpoint: API endpoint path
+            request_headers: Headers from incoming request (containing credentials)
+            params: Query parameters
+            include_workspace_header: Whether to include workspace ID header
+            
+        Returns:
+            API response data
+        """
+        # Extract credentials from request headers
+        api_key, workspace_id = self._extract_credentials_from_headers(request_headers)
+        
+        # Build API request headers
+        api_headers = self._build_request_headers(
+            api_key, workspace_id, include_workspace_header
+        )
+        
+        url = f"{self.base_url}{endpoint.lstrip('/')}"
+        response = await self._client.get(url, params=params, headers=api_headers)
         return self._handle_response(response)
     
     @retry(
@@ -130,37 +150,52 @@ class PublerAPIClient:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         retry=retry_if_exception_type((httpx.RequestError, PublerRateLimitError))
     )
-    async def post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None,
+    async def post(self, endpoint: str, request_headers: Dict[str, str],
+                   json_data: Optional[Dict[str, Any]] = None,
                    include_workspace_header: bool = True) -> Dict[str, Any]:
-        """Make POST request to Publer API."""
-        url = f"{self.base_url}{endpoint.lstrip('/')}"
-        headers = self._get_base_headers(include_workspace=include_workspace_header)
+        """
+        Make POST request to Publer API with request-scoped credentials.
         
-        response = await self._client.post(url, json=json_data, headers=headers)
+        Args:
+            endpoint: API endpoint path
+            request_headers: Headers from incoming request (containing credentials)
+            json_data: Request body data
+            include_workspace_header: Whether to include workspace ID header
+            
+        Returns:
+            API response data
+        """
+        # Extract credentials from request headers
+        api_key, workspace_id = self._extract_credentials_from_headers(request_headers)
+        
+        # Build API request headers
+        api_headers = self._build_request_headers(
+            api_key, workspace_id, include_workspace_header
+        )
+        
+        url = f"{self.base_url}{endpoint.lstrip('/')}"
+        response = await self._client.post(url, json=json_data, headers=api_headers)
         return self._handle_response(response)
     
-    async def poll_job_status(self, job_id: str, timeout: int = 300, 
-                             poll_interval: int = 2) -> Dict[str, Any]:
+    async def poll_job_status(self, job_id: str, request_headers: Dict[str, str],
+                             timeout: int = 300, poll_interval: int = 2) -> Dict[str, Any]:
         """
-        Poll job status until completion or timeout.
+        Poll job status until completion with request-scoped credentials.
         
         Args:
             job_id: Job ID returned from async operations
-            timeout: Maximum time to wait in seconds (default: 5 minutes)
+            request_headers: Headers from incoming request (containing credentials)
+            timeout: Maximum time to wait in seconds
             poll_interval: Seconds between status checks
             
         Returns:
             Final job result when completed
-            
-        Raises:
-            PublerJobTimeoutError: If job doesn't complete within timeout
-            PublerAPIError: If job fails or other API error occurs
         """
         start_time = time.time()
         
         while time.time() - start_time < timeout:
             try:
-                result = await self.get(f"job_status/{job_id}")
+                result = await self.get(f"job_status/{job_id}", request_headers)
                 
                 status = result.get("status")
                 if status == "completed":
@@ -192,11 +227,7 @@ class PublerAPIClient:
         await self.close()
 
 
-# Helper function to create client from settings
-def create_client_from_settings(settings: Settings) -> PublerAPIClient:
-    """Create Publer API client from settings."""
-    return PublerAPIClient(
-        api_key=settings.publer_api_key,
-        workspace_id=settings.publer_workspace_id,
-        base_url=settings.publer_api_base_url
-    )
+# Helper function to create client 
+def create_client() -> PublerAPIClient:
+    """Create Publer API client."""
+    return PublerAPIClient()
