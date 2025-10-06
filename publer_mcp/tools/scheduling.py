@@ -8,7 +8,7 @@ from pydantic import Field
 import re
 from urllib.parse import urlparse
 
-from ..auth import extract_publer_credentials, validate_workspace_access, create_api_headers
+from ..auth import extract_publer_credentials, validate_api_key, validate_workspace_id, create_api_headers
 from ..client import create_client, PublerAPIError
 from ..utils.content_parser import BlogContentParser
 from ..utils.job_tracker import AsyncJobTracker
@@ -18,6 +18,7 @@ async def publer_blog_to_twitter_scheduler(
     ctx: Context,
     blog_url: Annotated[str, Field(description="URL of the blog post to promote")],
     twitter_message: Annotated[str, Field(description="Custom Twitter message (max 280 chars)")],
+    workspace_id: Annotated[str, Field(description="Publer workspace ID")],
     target_platforms: Annotated[List[str], Field(description="Platform account IDs to post to")] = None,
     schedule_time: Annotated[Optional[str], Field(description="ISO format datetime for scheduling (e.g., '2024-01-15T10:00:00Z')")] = None,
     include_blog_preview: Annotated[bool, Field(description="Include blog preview image if available")] = True
@@ -35,12 +36,21 @@ async def publer_blog_to_twitter_scheduler(
     try:
         # Extract and validate credentials
         credentials = extract_publer_credentials(ctx)
-        workspace_valid, workspace_error = validate_workspace_access(credentials)
-        if not workspace_valid:
+        api_valid, api_error = validate_api_key(credentials)
+        if not api_valid:
             return {
                 "status": "authentication_failed",
+                "error": api_error,
+                "action_required": "Verify x-api-key header"
+            }
+        
+        # Validate workspace_id parameter
+        workspace_valid, workspace_error = validate_workspace_id(workspace_id)
+        if not workspace_valid:
+            return {
+                "status": "validation_failed",
                 "error": workspace_error,
-                "action_required": "Verify x-api-key and x-workspace-id headers"
+                "action_required": "Provide a valid workspace_id parameter"
             }
         
         # Validate inputs
@@ -61,7 +71,7 @@ async def publer_blog_to_twitter_scheduler(
         client = create_client()
         
         # Get available accounts to validate platforms
-        accounts_headers = create_api_headers(credentials, include_workspace=True)
+        accounts_headers = create_api_headers(credentials, workspace_id=workspace_id)
         accounts_response = await client.get("accounts", accounts_headers)
         available_accounts = accounts_response.get('data', [])
         
@@ -175,6 +185,7 @@ async def publer_multi_platform_scheduler(
     ctx: Context,
     content: Annotated[str, Field(description="Main content text for all platforms")],
     target_platforms: Annotated[List[str], Field(description="Platform account IDs to post to")],
+    workspace_id: Annotated[str, Field(description="Publer workspace ID")],
     platform_customizations: Annotated[Optional[Dict[str, Dict]], Field(description="Platform-specific content overrides (e.g., {'twitter': {'content': 'Custom tweet'}})")] = None,
     media_urls: Annotated[List[str], Field(description="Media URLs to attach to posts")] = None,
     schedule_time: Annotated[Optional[str], Field(description="ISO format datetime for scheduling (e.g., '2024-01-15T10:00:00Z')")] = None
@@ -191,12 +202,21 @@ async def publer_multi_platform_scheduler(
     try:
         # Extract and validate credentials
         credentials = extract_publer_credentials(ctx)
-        workspace_valid, workspace_error = validate_workspace_access(credentials)
-        if not workspace_valid:
+        api_valid, api_error = validate_api_key(credentials)
+        if not api_valid:
             return {
                 "status": "authentication_failed",
+                "error": api_error,
+                "action_required": "Verify x-api-key header"
+            }
+        
+        # Validate workspace_id parameter
+        workspace_valid, workspace_error = validate_workspace_id(workspace_id)
+        if not workspace_valid:
+            return {
+                "status": "validation_failed",
                 "error": workspace_error,
-                "action_required": "Verify x-api-key and x-workspace-id headers"
+                "action_required": "Provide a valid workspace_id parameter"
             }
         
         # Validate inputs
@@ -217,7 +237,7 @@ async def publer_multi_platform_scheduler(
         client = create_client()
         
         # Get available accounts to validate platforms and get platform types
-        accounts_headers = create_api_headers(credentials, include_workspace=True)
+        accounts_headers = create_api_headers(credentials, workspace_id=workspace_id)
         accounts_response = await client.get("accounts", accounts_headers)
         available_accounts = accounts_response.get('data', [])
         
