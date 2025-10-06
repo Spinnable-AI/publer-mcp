@@ -7,7 +7,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 from datetime import datetime, timedelta
 
-from ..auth import extract_publer_credentials, validate_api_key, validate_workspace_access, create_api_headers
+from ..auth import extract_publer_credentials, validate_api_key, validate_workspace_id, create_api_headers
 from ..client import create_client, PublerAPIError
 
 
@@ -46,8 +46,8 @@ async def publer_check_job_status(
         
         client = create_client()
         
-        # Create headers (job status typically doesn't require workspace_id, but include if available)
-        headers = create_api_headers(credentials, include_workspace=bool(credentials.workspace_id))
+        # Create headers (job status typically doesn't require workspace_id, but include API key)
+        headers = create_api_headers(credentials)
         
         try:
             # Get job status from Publer API
@@ -164,6 +164,7 @@ async def publer_check_job_status(
 
 async def publer_monitor_recent_jobs(
     ctx: Context,
+    workspace_id: Annotated[str, Field(description="Publer workspace ID")],
     limit: Annotated[int, Field(ge=1, le=50, description="Maximum number of jobs to return (1-50)")] = 10,
     status_filter: Annotated[str, Field(description="Filter by status: 'all', 'pending', 'completed', 'failed', 'in_progress'")] = "all",
     time_range: Annotated[str, Field(description="Time range: '1h', '6h', '24h', '7d', '30d'")] = "24h"
@@ -181,12 +182,21 @@ async def publer_monitor_recent_jobs(
     try:
         # Extract and validate credentials
         credentials = extract_publer_credentials(ctx)
-        workspace_valid, workspace_error = validate_workspace_access(credentials)
-        if not workspace_valid:
+        api_valid, api_error = validate_api_key(credentials)
+        if not api_valid:
             return {
                 "status": "authentication_failed",
+                "error": api_error,
+                "action_required": "Verify x-api-key header"
+            }
+        
+        # Validate workspace_id parameter
+        workspace_valid, workspace_error = validate_workspace_id(workspace_id)
+        if not workspace_valid:
+            return {
+                "status": "validation_failed",
                 "error": workspace_error,
-                "action_required": "Verify x-api-key and x-workspace-id headers"
+                "action_required": "Provide a valid workspace_id parameter"
             }
         
         # Validate inputs
@@ -209,7 +219,7 @@ async def publer_monitor_recent_jobs(
         client = create_client()
         
         # Create headers for API calls
-        headers = create_api_headers(credentials, include_workspace=True)
+        headers = create_api_headers(credentials, workspace_id=workspace_id)
         
         # Calculate time filter for API query
         time_filter = _calculate_time_filter(time_range)
