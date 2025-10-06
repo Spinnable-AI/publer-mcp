@@ -26,6 +26,13 @@ dependencies = [
     "pydantic>=2.7.0",
     "python-dotenv>=1.0.0",
     
+    # Content Parsing & Web Scraping
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+    
+    # Time & Date Handling
+    "pytz>=2023.3",
+    
     # Development & Production Tools
     "ruff>=0.13.2",
 ]
